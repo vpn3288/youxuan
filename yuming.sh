@@ -169,7 +169,7 @@ detect_cdn() {
     elif echo "$ssl_info" | grep -qi "cloudfront\|amazonaws";         then echo "AWS CF"
     elif echo "$ssl_info" | grep -qi "google\|gvt1\|gvt2";            then echo "Google"
     elif echo "$ssl_info" | grep -qi "microsoft\|msecnd\|edgecast";   then echo "MS CDN"
-    elif echo "$ssl_info" | grep -qi "cloudflare";                     then echo "CF[!]"
+    elif echo "$ssl_info" | grep -qi "cloudflare";                     then echo "CF_WARN"
     else                                                                     echo "Other"
     fi
 }
@@ -218,7 +218,7 @@ test_domain() {
     local score
     score=$(printf "%.3f" "$lat")
     [[ "$h2"       == "YES"  ]] && score=$(echo "$score - 0.5" | bc -l 2>/dev/null || echo "$score")
-    [[ "$cdn"      == "CF[!]"]] && score=$(echo "$score + 5.0" | bc -l 2>/dev/null || echo "$score")
+    [[ "$cdn"      == "CF_WARN" ]] && score=$(echo "$score + 5.0" | bc -l 2>/dev/null || echo "$score")
     [[ "$tolerant" == "WARN" ]] && score=$(echo "$score + 2.0" | bc -l 2>/dev/null || echo "$score")
 
     # ⑦ 写结果（score|延迟|域名|H2|CDN|宽容度）
@@ -290,7 +290,7 @@ while IFS='|' read -r score lat dom h2 cdn tolerant; do
     # CDN 着色
     case "$cdn" in
         Akamai|Fastly|Google|"AWS CF"|"MS CDN") cdncolor=$GREEN  ;;
-        "CF[!]")                                 cdncolor=$YELLOW ;;
+        "CF_WARN")                                 cdncolor=$YELLOW ;;
         *)                                       cdncolor=$NC     ;;
     esac
 
@@ -337,7 +337,7 @@ done <<< "$results"
 echo -e "${BOLD}  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
 echo -e "  ${YELLOW}${BOLD}💡 选域名指南${NC}"
 echo -e "  ${GREEN}  · CDN = Akamai / Fastly / Google / AWS CF / MS CDN  →  优先选${NC}"
-echo -e "  ${YELLOW}  · CDN = CF[!]（Cloudflare托管）→ 有bot检测风险，稳定性差，慎用${NC}"
+echo -e "  ${YELLOW}  · CDN = CF_WARN (Cloudflare托管)→ 有bot检测风险，稳定性差，慎用${NC}"
 echo -e "  ${YELLOW}  · 宽容度 = WARN  →  服务器可能主动断开空握手，稳定性较差${NC}"
 echo -e "  ${GREEN}  · HTTP/2 = YES   →  与真实用户流量特征更吻合，优先选${NC}"
 echo -e "  ${NC}  · dest 与 serverName 填同一个域名，端口固定 443${NC}"

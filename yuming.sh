@@ -2,6 +2,36 @@
 # VPS 优选域名稳定筛选器 v5.0
 # 支持并行测试、扩充域名库、推荐最优3个域名
 
+# ── 版本号（每次更新脚本时修改此处）─────────────────────────────────────────
+SCRIPT_VERSION="5.0"
+SCRIPT_URL="https://raw.githubusercontent.com/vpn3288/youxuan/refs/heads/main/yuming.sh"
+
+# ── 清除本地缓存残留（防止旧版临时文件干扰）──────────────────────────────────
+# 清理上次运行可能残留的临时目录（匹配 mktemp 默认命名规则）
+rm -rf /tmp/tmp.* 2>/dev/null
+
+# ── 自我更新检查（联网时自动拉最新版并重新执行）──────────────────────────────
+# 仅在非管道模式下执行自更新（避免 curl|bash 时死循环）
+if [[ ! -p /dev/stdin ]]; then
+    REMOTE_VER=$(curl -sSfL --max-time 5 \
+        "${SCRIPT_URL}?$(date +%s)" 2>/dev/null \
+        | grep -m1 'SCRIPT_VERSION=' \
+        | cut -d'"' -f2)
+
+    if [[ -n "$REMOTE_VER" && "$REMOTE_VER" != "$SCRIPT_VERSION" ]]; then
+        echo -e "\e[33m[UPDATE] 发现新版本 v${REMOTE_VER}，正在自动更新并重新运行...\e[0m"
+        TMPFILE=$(mktemp /tmp/yuming_XXXXXX.sh)
+        curl -sSfL --max-time 15 \
+            "${SCRIPT_URL}?$(date +%s)" -o "$TMPFILE" 2>/dev/null \
+            && chmod +x "$TMPFILE" \
+            && bash "$TMPFILE" \
+            && rm -f "$TMPFILE" \
+            && exit 0
+        rm -f "$TMPFILE"
+        echo -e "\e[31m[UPDATE] 更新失败，继续使用当前版本 v${SCRIPT_VERSION}\e[0m"
+    fi
+fi
+
 # ── 环境依赖检查 ──────────────────────────────────────────────────────────────
 for cmd in bc openssl curl ping; do
     if ! command -v "$cmd" &>/dev/null; then

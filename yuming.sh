@@ -186,7 +186,7 @@ test_domain() {
 
     # ② TLS 1.3 + X25519 握手（REALITY核心·4秒超时）
     local ssl_info
-    ssl_info=$(timeout 4s openssl s_client \
+    ssl_info=$(timeout 3s openssl s_client \
         -connect "${domain}:443" \
         -tls1_3 \
         -servername "${domain}" \
@@ -199,14 +199,14 @@ test_domain() {
     #    宽容的CDN节点会保持等待；严格的服务器立刻RST
     local tolerant="YES"
     local rtt_check
-    rtt_check=$(timeout 2s bash -c \
+    rtt_check=$(timeout 1s bash -c \
         "echo '' | openssl s_client -connect '${domain}:443' \
          -tls1_3 -servername '${domain}' -quiet 2>&1 | head -1" 2>/dev/null)
     echo "$rtt_check" | grep -qi "errno\|refused\|reset\|error" && tolerant="WARN"
 
     # ④ HTTP/2 检测
     local h2="NO"
-    curl -sI --http2 --connect-timeout 2 --max-time 4 \
+    curl -sI --http2 --connect-timeout 2 --max-time 3 \
         "https://$domain" 2>/dev/null | grep -qi "HTTP/2" && h2="YES"
 
     # ⑤ CDN 托管商识别
@@ -245,16 +245,14 @@ echo -e "  ${YELLOW}▶ 正在扫描，请稍候...${NC}"
 echo ""
 
 # ── 并行执行 ──────────────────────────────────────────────────────────────────
-active=0
-for domain in "${DOMAINS[@]}"; do
-    test_domain "$domain" &
-    (( active++ ))
-    if (( active >= PARALLEL )); then
-        wait -n 2>/dev/null || wait
-        (( active-- )) 2>/dev/null || active=0
-    fi
+total=${#DOMAINS[@]}
+for (( i=0; i<total; i+=PARALLEL )); do
+    batch=( "${DOMAINS[@]:i:PARALLEL}" )
+    for domain in "${batch[@]}"; do
+        test_domain "$domain" &
+    done
+    wait
 done
-wait
 
 # ── 汇总排序 ──────────────────────────────────────────────────────────────────
 results=$(cat "${RESULT_DIR}"/* 2>/dev/null | sort -t'|' -k1 -n)

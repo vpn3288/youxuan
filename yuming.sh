@@ -1,87 +1,250 @@
 #!/bin/bash
+# VPS 优选域名稳定筛选器 v5.0
+# 支持并行测试、扩充域名库、推荐最优3个域名
 
-# 环境检查与安装
+# ── 环境依赖检查 ──────────────────────────────────────────────────────────────
 for cmd in bc openssl curl ping; do
-    if ! command -v $cmd &> /dev/null; then
-        apt update && apt install -y $cmd || yum install -y $cmd
+    if ! command -v "$cmd" &>/dev/null; then
+        echo "正在安装依赖: $cmd ..."
+        apt-get update -qq && apt-get install -y -qq "$cmd" 2>/dev/null \
+            || yum install -y "$cmd" 2>/dev/null \
+            || { echo "无法安装 $cmd，请手动安装后重试"; exit 1; }
     fi
 done
 
-# 颜色定义
+# ── 颜色定义 ──────────────────────────────────────────────────────────────────
 RED='\e[31m'
 GREEN='\e[32m'
 YELLOW='\e[33m'
 BLUE='\e[34m'
 PURPLE='\e[35m'
+CYAN='\e[36m'
 BOLD='\e[1m'
 NC='\e[0m'
 
+# ── 并行数量 ──────────────────────────────────────────────────────────────────
+PARALLEL=5
+
+# ── 域名库（扩充至 80+ 个）────────────────────────────────────────────────────
 DOMAINS=(
-    "gateway.icloud.com" "itunes.apple.com" "swdist.apple.com" "swcdn.apple.com" 
-    "updates.cdn-apple.com" "mensura.cdn-apple.com" "dl.google.com" "www.google-analytics.com" 
-    "download-installer.cdn.mozilla.net" "addons.mozilla.org" "s0.awsstatic.com" 
-    "d1.awsstatic.com" "m.media-amazon.com" "player.live-video.net" "academy.nvidia.com"
-    "one-piece.com" "lol.secure.dyn.riotcdn.net" "www.python.org" "vuejs.org" 
-    "react.dev" "www.java.com" "www.oracle.com" "redis.io" "www.caltech.edu" 
-    "www.calstatela.edu" "www.suny.edu" "cname.vercel-dns.com" "www.samsung.com" 
-    "github.io" "www.nintendo.co.jp" "www.sony.co.jp" "www.grab.com" 
-    "www.razer.com" "www.nus.edu.sg" "www.gov.sg" "www.singpost.com"
+    # Apple
+    "gateway.icloud.com"
+    "itunes.apple.com"
+    "swdist.apple.com"
+    "swcdn.apple.com"
+    "updates.cdn-apple.com"
+    "mensura.cdn-apple.com"
+    "apple.com"
+    "www.apple.com"
+    # Google
+    "dl.google.com"
+    "www.google-analytics.com"
+    "storage.googleapis.com"
+    "www.google.com"
+    "fonts.googleapis.com"
+    "ajax.googleapis.com"
+    # Mozilla
+    "download-installer.cdn.mozilla.net"
+    "addons.mozilla.org"
+    "www.mozilla.org"
+    # Amazon/AWS
+    "s0.awsstatic.com"
+    "d1.awsstatic.com"
+    "m.media-amazon.com"
+    "player.live-video.net"
+    "d2lrzjdc1gd2wr.cloudfront.net"
+    "aws.amazon.com"
+    # Microsoft
+    "download.microsoft.com"
+    "aka.ms"
+    "azureedge.net"
+    "www.microsoft.com"
+    # Gaming
+    "academy.nvidia.com"
+    "one-piece.com"
+    "lol.secure.dyn.riotcdn.net"
+    "www.nintendo.co.jp"
+    "www.sony.co.jp"
+    "www.razer.com"
+    "store.steampowered.com"
+    "cdn.akamai.steamstatic.com"
+    "www.ea.com"
+    "www.epicgames.com"
+    "www.ubisoft.com"
+    "www.twitch.tv"
+    # Dev / Tech
+    "www.python.org"
+    "vuejs.org"
+    "react.dev"
+    "www.java.com"
+    "www.oracle.com"
+    "redis.io"
+    "github.io"
+    "raw.githubusercontent.com"
+    "objects.githubusercontent.com"
+    "www.npmjs.com"
+    "registry.npmjs.org"
+    "pypi.org"
+    "hub.docker.com"
+    "www.cloudflare.com"
+    "www.digitalocean.com"
+    "www.linode.com"
+    # CDN
+    "cname.vercel-dns.com"
+    "cdn.jsdelivr.net"
+    "cdnjs.cloudflare.com"
+    "unpkg.com"
+    "fastly.com"
+    # Education
+    "www.caltech.edu"
+    "www.calstatela.edu"
+    "www.suny.edu"
+    "www.nus.edu.sg"
+    "www.mit.edu"
+    "www.stanford.edu"
+    "www.harvard.edu"
+    # Singapore / SEA
+    "www.gov.sg"
+    "www.singpost.com"
+    "www.grab.com"
+    # Consumer Electronics
+    "www.samsung.com"
+    "www.sony.com"
+    "www.lg.com"
+    "www.asus.com"
+    # Social / Media
+    "www.spotify.com"
+    "cdn.discordapp.com"
+    "discord.com"
+    "www.reddit.com"
+    "www.medium.com"
+    # Other popular
+    "www.wikipedia.org"
+    "www.wikimedia.org"
+    "www.cloudflare.com"
+    "1.1.1.1"
 )
 
+# ── 临时目录 ──────────────────────────────────────────────────────────────────
 RESULT_DIR=$(mktemp -d)
+trap 'rm -rf "$RESULT_DIR"' EXIT
 
+# ── 单域名测试函数 ─────────────────────────────────────────────────────────────
 test_domain() {
     local domain=$1
-    # Ping 测试 (1s 超时)
-    local lat=$(ping -c 1 -W 1 "$domain" 2>/dev/null | awk -F '/' 'END {print $5}')
+
+    # 1. Ping 测试（1 秒超时，取平均 RTT）
+    local lat
+    lat=$(ping -c 2 -W 1 "$domain" 2>/dev/null | awk -F '/' 'END {print $5}')
     [[ -z "$lat" ]] && return
 
-    # TLS 1.3 + X25519 组合测试 (REALITY 核心)
-    # 使用 openssl 直接获取结果，增加 3 秒宽限
-    local ssl_info=$(timeout 3s openssl s_client -connect "${domain}:443" -tls1_3 -servername "${domain}" </dev/null 2>/dev/null)
-    
-    if echo "$ssl_info" | grep -q "X25519"; then
-        local h2="NO "
-        # 顺便检查 H2
-        [[ $(curl -I --http2 --connect-timeout 2 -s "https://$domain" 2>&1) == *"HTTP/2"* ]] && h2="YES"
-        echo "$lat|$domain|$h2" > "$RESULT_DIR/$domain"
-    fi
+    # 2. TLS 1.3 + X25519 测试（REALITY 核心指标，3 秒超时）
+    local ssl_info
+    ssl_info=$(timeout 3s openssl s_client \
+        -connect "${domain}:443" \
+        -tls1_3 \
+        -servername "${domain}" \
+        </dev/null 2>/dev/null)
+
+    echo "$ssl_info" | grep -q "X25519" || return
+
+    # 3. HTTP/2 检测
+    local h2="NO"
+    local curl_out
+    curl_out=$(curl -sI --http2 \
+        --connect-timeout 2 \
+        --max-time 4 \
+        "https://$domain" 2>/dev/null)
+    echo "$curl_out" | grep -qi "HTTP/2" && h2="YES"
+
+    # 4. 写结果（格式：延迟|域名|H2支持）
+    echo "${lat}|${domain}|${h2}" > "${RESULT_DIR}/${domain//\//_}"
 }
 
-echo -e "${BLUE}${BOLD}================================================================${NC}"
-echo -e "${BLUE}${BOLD}      VPS 优选域名稳定筛选器 v4.1 (Stable & Fast)      ${NC}"
-echo -e "${BLUE}${BOLD}================================================================${NC}"
-echo -e "正在扫描域名库，请稍候...\n"
+export -f test_domain
+export RESULT_DIR
 
-# 分批次执行，每组 10 个，防止被封 IP
-BATCH_SIZE=10
-for ((i=0; i<${#DOMAINS[@]}; i+=BATCH_SIZE)); do
-    for ((j=i; j<i+BATCH_SIZE && j<${#DOMAINS[@]}; j++)); do
-        test_domain "${DOMAINS[$j]}" &
-    done
-    wait
+# ── 主界面 ────────────────────────────────────────────────────────────────────
+echo -e "${BLUE}${BOLD}╔══════════════════════════════════════════════════════════════════╗${NC}"
+echo -e "${BLUE}${BOLD}║        VPS 优选域名稳定筛选器 v5.0  (Parallel & Extended)        ║${NC}"
+echo -e "${BLUE}${BOLD}╚══════════════════════════════════════════════════════════════════╝${NC}"
+echo -e "  域名库: ${CYAN}${#DOMAINS[@]}${NC} 个  |  并行数: ${CYAN}${PARALLEL}${NC}  |  检测协议: ${CYAN}TLS 1.3 + X25519${NC}\n"
+echo -e "正在扫描，请稍候...\n"
+
+# ── 并行执行（每次最多 PARALLEL 个并发）─────────────────────────────────────
+active=0
+for domain in "${DOMAINS[@]}"; do
+    test_domain "$domain" &
+    (( active++ ))
+    if (( active >= PARALLEL )); then
+        wait -n 2>/dev/null || wait   # bash 4.3+ 支持 wait -n；否则等全部
+        active=0
+    fi
 done
+wait  # 等待最后一批
 
-# 表头
-printf "${BOLD}%-35s | %-8s | %-8s | %-10s${NC}\n" "域名 (Domain)" "HTTP/2" "X25519" "延迟(ms)"
-echo "---------------------------------------------------------------------------------------"
+# ── 汇总结果 ──────────────────────────────────────────────────────────────────
+results=$(cat "${RESULT_DIR}"/* 2>/dev/null | sort -t'|' -k1 -n)
 
-results=$(cat "$RESULT_DIR"/* 2>/dev/null | sort -n)
+echo -e "\n${BOLD}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+printf "${BOLD}%-38s | %-6s | %-6s | %s${NC}\n" "域名" "HTTP/2" "X25519" "延迟(ms)"
+echo -e "${BOLD}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
 
 if [[ -z "$results" ]]; then
-    echo -e "${RED}⚠️ 仍未发现结果。可能原因：你的 VPS 屏蔽了 OpenSSL 外部请求，请手动尝试：${NC}"
-    echo -e "${YELLOW}openssl s_client -connect www.razer.com:443 -tls1_3 -servername www.razer.com${NC}"
-else
-    while IFS='|' read -r lat dom h2; do
-        color=$NC
-        (( $(echo "$lat < 10" | bc -l) )) && color=$GREEN
-        printf "%-35s | %-8s | %-8s | ${color}%-10s${NC}\n" "$dom" "$h2" "YES" "$lat"
-    done <<< "$results"
-
-    echo "---------------------------------------------------------------------------------------"
-    best_dom=$(echo "$results" | head -n 1 | cut -d'|' -f2)
-    best_lat=$(echo "$results" | head -n 1 | cut -d'|' -f1)
-    echo -e "\n${PURPLE}${BOLD}🏆 最佳推荐: ${GREEN}$best_dom${NC} (延迟: $best_lat ms)"
+    echo -e "\n${RED}⚠️  未发现任何符合条件的域名。${NC}"
+    echo -e "${YELLOW}可能原因：VPS 出口屏蔽了 TLS 1.3 / X25519，或网络不通。${NC}"
+    echo -e "${YELLOW}手动测试命令：${NC}"
+    echo -e "  openssl s_client -connect www.razer.com:443 -tls1_3 -servername www.razer.com"
+    exit 1
 fi
 
-rm -rf "$RESULT_DIR"
+count=0
+while IFS='|' read -r lat dom h2; do
+    [[ -z "$lat" || -z "$dom" ]] && continue
+    (( count++ ))
+
+    # 延迟着色
+    if (( $(echo "$lat < 10" | bc -l 2>/dev/null || echo 0) )); then
+        latcolor=$GREEN
+    elif (( $(echo "$lat < 50" | bc -l 2>/dev/null || echo 0) )); then
+        latcolor=$CYAN
+    elif (( $(echo "$lat < 150" | bc -l 2>/dev/null || echo 0) )); then
+        latcolor=$YELLOW
+    else
+        latcolor=$RED
+    fi
+
+    h2color=$NC
+    [[ "$h2" == "YES" ]] && h2color=$GREEN
+
+    printf "%-38s | ${h2color}%-6s${NC} | ${GREEN}%-6s${NC} | ${latcolor}%s ms${NC}\n" \
+        "$dom" "$h2" "YES" "$lat"
+done <<< "$results"
+
+echo -e "${BOLD}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+echo -e "共找到 ${CYAN}${count}${NC} 个通过 TLS 1.3 + X25519 验证的域名\n"
+
+# ── TOP 3 推荐 ────────────────────────────────────────────────────────────────
+echo -e "${PURPLE}${BOLD}┌─────────────────────────────────────────────────────────────────┐${NC}"
+echo -e "${PURPLE}${BOLD}│                     🏆  TOP 3 最佳推荐                          │${NC}"
+echo -e "${PURPLE}${BOLD}└─────────────────────────────────────────────────────────────────┘${NC}"
+
+rank=1
+while IFS='|' read -r lat dom h2; do
+    [[ -z "$lat" || -z "$dom" ]] && continue
+    [[ $rank -gt 3 ]] && break
+
+    case $rank in
+        1) medal="🥇" ;;
+        2) medal="🥈" ;;
+        3) medal="🥉" ;;
+    esac
+
+    echo -e "  ${medal}  ${GREEN}${BOLD}${dom}${NC}"
+    echo -e "      延迟: ${CYAN}${lat} ms${NC}  |  HTTP/2: ${h2}  |  TLS 1.3 + X25519: ${GREEN}✓${NC}"
+    (( rank++ ))
+done <<< "$results"
+
+echo ""
+echo -e "${YELLOW}💡 使用建议：以上域名可直接用作 REALITY 配置的 dest/serverName 字段。${NC}"
+echo -e "${YELLOW}   优先选择延迟低、HTTP/2 为 YES 的域名以获得最佳效果。${NC}"
